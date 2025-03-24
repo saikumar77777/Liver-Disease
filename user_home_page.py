@@ -7,13 +7,84 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import google.generativeai as genai
 import smtplib
+import geocoder
 import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from database import fetch_user
 import pdfplumber
 import re
+liver_recommendations = {
+    "ast_sgot": {
+        "normal": "Your AST (SGOT) levels are within the normal range. Continue maintaining a healthy lifestyle with a balanced diet.",
+        "abnormal": "Elevated AST (SGOT) levels may indicate liver damage. Avoid alcohol, processed foods, and excessive fats. Include more antioxidant-rich foods like leafy greens and berries."
+    },
+    "alt_sgot": {
+        "normal": "Your ALT (SGPT) levels are normal. Keep following a nutritious diet and stay active.",
+        "abnormal": "High ALT (SGPT) levels can be a sign of liver inflammation. Reduce sugar intake, exercise regularly, and include liver-friendly foods like garlic, turmeric, and green tea."
+    },
+    "ast_alt_ratio": {
+        "normal": "Your AST-ALT ratio is within a healthy range. Keep following good dietary habits and staying hydrated.",
+        "abnormal": "A high AST-ALT ratio may indicate chronic liver disease. Prioritize liver detox foods such as beetroot, walnuts, and avocados while avoiding excess sodium and saturated fats."
+    },
+    "ggtp": {
+        "normal": "Your GGTP levels are normal. Ensure you stay hydrated and maintain a liver-friendly diet.",
+        "abnormal": "Elevated GGTP levels can be linked to liver dysfunction or alcohol-related issues. Avoid alcohol completely, drink more water, and consume fiber-rich foods like whole grains and legumes."
+    },
+    "alp": {
+        "normal": "Your ALP levels are normal. Keep following a balanced diet and regular exercise routine.",
+        "abnormal": "High ALP levels can indicate bile duct issues. Avoid fried foods, increase your intake of vitamin D-rich foods like eggs and fish, and engage in moderate exercise."
+    },
+    "bilirubin_total": {
+        "normal": "Your total bilirubin levels are within normal limits. Continue maintaining a healthy lifestyle.",
+        "abnormal": "Elevated bilirubin may suggest jaundice or liver stress. Stay hydrated, consume citrus fruits, and eat easily digestible foods like soups and boiled vegetables."
+    },
+    "bilirubin_direct": {
+        "normal": "Your direct bilirubin levels are normal. Keep up your good health habits.",
+        "abnormal": "High direct bilirubin may indicate bile obstruction. Reduce dairy intake, increase fiber consumption, and include probiotic foods like yogurt in your diet."
+    },
+    "bilirubin_indirect": {
+        "normal": "Your indirect bilirubin levels are within a healthy range. Keep taking care of your liver.",
+        "abnormal": "High indirect bilirubin may be due to liver dysfunction. Increase your intake of iron-rich foods like spinach and legumes while reducing fatty foods."
+    },
+    "total_protein": {
+        "normal": "Your total protein levels are balanced. Ensure you have sufficient protein intake daily.",
+        "abnormal": "Low protein levels may indicate poor liver function. Increase lean proteins like fish, eggs, and plant-based proteins while avoiding red meat."
+    },
+    "albumin": {
+        "normal": "Your albumin levels are good. Keep following a nutritious diet and stay hydrated.",
+        "abnormal": "Low albumin may be linked to chronic liver conditions. Increase protein intake, stay hydrated, and avoid processed foods."
+    }
+}
+def generate_liver_recommendations(user_inputs):
+    recommendations = []
+
+    # Check each input parameter and append relevant recommendations
+    for key, value in user_inputs.items():
+        if value == "normal":
+            recommendations.append(liver_recommendations[key]["normal"])
+        else:
+            recommendations.append(liver_recommendations[key]["abnormal"])
+
+    return " ".join(recommendations)  # Combine all recommendations into a single paragraph
+def classify_liver_parameters(ast_sgot, alt_sgot, ast_alt_ratio, ggtp, alp, bilirubin_total, 
+                               bilirubin_direct, bilirubin_indirect, total_protein, albumin):
+    user_inputs = {
+        "ast_sgot": "normal" if 10 <= ast_sgot <= 40 else "abnormal",
+        "alt_sgot": "normal" if 7 <= alt_sgot <= 56 else "abnormal",
+        "ast_alt_ratio": "normal" if 0.8 <= ast_alt_ratio <= 1.2 else "abnormal",
+        "ggtp": "normal" if 8 <= ggtp <= 61 else "abnormal",
+        "alp": "normal" if 44 <= alp <= 147 else "abnormal",
+        "bilirubin_total": "normal" if 0.1 <= bilirubin_total <= 1.2 else "abnormal",
+        "bilirubin_direct": "normal" if 0.0 <= bilirubin_direct <= 0.3 else "abnormal",
+        "bilirubin_indirect": "normal" if 0.1 <= bilirubin_indirect <= 1.0 else "abnormal",
+        "total_protein": "normal" if 6.0 <= total_protein <= 8.3 else "abnormal",
+        "albumin": "normal" if 3.5 <= albumin <= 5.0 else "abnormal"
+    }
+    
+    return user_inputs
 def disease_info_box(disease_name):
     return f"""
         <div style="
@@ -23,7 +94,25 @@ def disease_info_box(disease_name):
             text-align: center;
             font-size: 50px;
             font-weight: bold;
-            color: red;">
+            color: red;
+            margin-bottom:20px;">
+            {disease_name}
+        </div>
+    """
+def prevntions(disease_name):
+    return f"""
+        <div style="
+            background-image:url(https://img.freepik.com/premium-photo/healthy-lifestyle-food-sport-concept-athlete-s-equipment-fresh-fruit-white-background_61573-3385.jpg);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-color: rgba(255, 255, 255, 0.8);
+            background-blend-mode: overlay;
+            padding: 10px;
+            border-radius: 10px;
+            text-align: justify;
+            font-size: 15px;
+            color: black;">
             {disease_name}
         </div>
     """
@@ -177,70 +266,210 @@ def user_home_page():
         </style>
         """,
         unsafe_allow_html=True
-        )  
-        # Load data
-        data = pd.read_csv('doctors.csv', encoding='utf-8', on_bad_lines='skip')
-        # UI: Select Region
-        st.markdown('<h1 style="text-align: center; color: #333;">🏥 Nearby Hospitals</h1>', unsafe_allow_html=True)
-        col1,col2,col3 = st.columns([1,4,1])
-        selected_region = col2.selectbox('🌍 Select Region', data['Region'].unique())
-
-        # Filter Data based on Selection
-        filtered_data = data[data['Region'] == selected_region]
-
-        # Custom CSS for styling the container and button
-        st.markdown(
-            """
-            <style>
-            .hospital-container {
-                background-color: #c4c4c2;
-                padding: 25px;
-                border-radius: 20px;
-                border: 2px solid #333;
-                box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-                text-align: center;
-                margin-bottom: 15px;
-            }
-            .hospital-name {
-                font-size: 18px;
-                font-weight: bold;
-                color: #333;
-            }
-            .map-button {
-                background-color: red;
-                color: white !important;
-                padding: 8px 12px;
-                text-decoration: none;
-                border-radius: 5px;
-                display: inline-block;
-                margin-top: 10px;
-                font-weight: bold;
-            }
-            .map-button:hover {
-                background-color: blue;
-                color: white !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
         )
+        data = pd.read_csv('doctors.csv', encoding='utf-8', on_bad_lines='skip')
+        # Predefined locations
+        locations = [
+            "Visakhapatnam", "Vijayawada", "Guntur", "Nellore", "Kurnool",
+            "Rajahmundry", "Kakinada", "Tirupati", "Anantapur", "Kadapa",
+            "Eluru", "Chittoor", "Machilipatnam", "Srikakulam", "Ongole",
+            "Tenali", "Hindupur", "Proddatur", "Madanapalle"
+        ]
 
-        # Create columns layout (3 per row)
-        cols = st.columns(3)
+        # UI: Title
+        st.markdown('<h1 style="text-align: center; color: #333;">🏥 Nearby Hospitals</h1>', unsafe_allow_html=True)
 
-        # Iterate through hospitals and distribute them across columns
-        for index, row in enumerate(filtered_data.iterrows()):
-            col = cols[index % 3]  # Distribute across 3 columns
-            with col:
+        g = geocoder.ip('me')  # Fetches location based on your IP
+        user_location = g.city  # Extract city from location
+        col1,col2,col3=st.columns([1,2,1])
+        loc = [
+            " ","Visakhapatnam", "Vijayawada", "Guntur", "Nellore", "Kurnool",
+            "Rajahmundry", "Kakinada", "Tirupati", "Anantapur", "Kadapa",
+            "Eluru", "Chittoor", "Machilipatnam", "Srikakulam", "Ongole",
+            "Tenali", "Hindupur", "Proddatur", "Madanapalle"
+        ]
+        user_loc=col3.selectbox("Select Your Location",loc)
+        if user_loc==" ":
+            if user_location in locations:
+                filtered_data = data[data['Region'] == user_location]
+
+                # Custom CSS for styling the container and button
                 st.markdown(
-                    f"""
-                    <div class="hospital-container">
-                        <div class="hospital-name">{row[1]['Hospital Name']}</div>
-                        <a href="{row[1]['Map Link']}" target="_blank" class="map-button">🚖 View on Map</a>
-                    </div>
+                    """
+                    <style>
+                    .hospital-container {
+                        background-color: #c4c4c2;
+                        padding: 25px;
+                        border-radius: 20px;
+                        border: 2px solid #333;
+                        box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+                        text-align: center;
+                        margin-bottom: 15px;
+                    }
+                    .hospital-name {
+                        font-size: 18px;
+                        font-weight: bold;
+                        color: #333;
+                    }
+                    .map-button {
+                        background-color: red;
+                        color: white !important;
+                        padding: 8px 12px;
+                        text-decoration: none;
+                        border-radius: 5px;
+                        display: inline-block;
+                        margin-top: 10px;
+                        font-weight: bold;
+                    }
+                    .map-button:hover {
+                        background-color: blue;
+                        color: white !important;
+                    }
+                    </style>
                     """,
                     unsafe_allow_html=True
                 )
+
+                # Create columns layout (3 per row)
+                cols = st.columns(3)
+
+                # Iterate through hospitals and distribute them across columns
+                for index, row in enumerate(filtered_data.iterrows()):
+                    col = cols[index % 3]  # Distribute across 3 columns
+                    with col:
+                        st.markdown(
+                            f"""
+                            <div class="hospital-container">
+                                <div class="hospital-name">{row[1]['Hospital Name']}</div>
+                                <a href="{row[1]['Map Link']}" target="_blank" class="map-button">🚖 View on Map</a>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                
+            else:
+                # Initialize Gemini API
+                genai.configure(api_key="AIzaSyCEHqEUnURAuH54Tng8IjlWSR6LyzzEpCI")
+                model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
+
+                if user_location:
+                    # Ask Gemini API to find the nearest location
+                    prompt = f"From the given list of locations {locations}, find the nearest one to {user_location}. If none, respond with 'Sorry, unable to find'."
+                    response = model.generate_content([prompt]).text.strip()
+                    match = re.search(r'\b(?:' + '|'.join(locations) + r')\b', response)
+                    if match:
+                        nearest_city = match.group(0)  # Extracted city name
+                        filtered_data = data[data['Region'] == nearest_city]
+
+                        # Custom CSS for styling the container and button
+                        st.markdown(
+                            """
+                            <style>
+                            .hospital-container {
+                                background-color: #c4c4c2;
+                                padding: 25px;
+                                border-radius: 20px;
+                                border: 2px solid #333;
+                                box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+                                text-align: center;
+                                margin-bottom: 15px;
+                            }
+                            .hospital-name {
+                                font-size: 18px;
+                                font-weight: bold;
+                                color: #333;
+                            }
+                            .map-button {
+                                background-color: red;
+                                color: white !important;
+                                padding: 8px 12px;
+                                text-decoration: none;
+                                border-radius: 5px;
+                                display: inline-block;
+                                margin-top: 10px;
+                                font-weight: bold;
+                            }
+                            .map-button:hover {
+                                background-color: blue;
+                                color: white !important;
+                            }
+                            </style>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+                        # Create columns layout (3 per row)
+                        cols = st.columns(3)
+
+                        # Iterate through hospitals and distribute them across columns
+                        for index, row in enumerate(filtered_data.iterrows()):
+                            col = cols[index % 3]  # Distribute across 3 columns
+                            with col:
+                                st.markdown(
+                                    f"""
+                                    <div class="hospital-container">
+                                        <div class="hospital-name">{row[1]['Hospital Name']}</div>
+                                        <a href="{row[1]['Map Link']}" target="_blank" class="map-button">🚖 View on Map</a>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+                
+        else:
+            filtered_data = data[data['Region'] == user_loc]
+            # Custom CSS for styling the container and button
+            st.markdown(
+                """
+                <style>
+                .hospital-container {
+                    background-color: #c4c4c2;
+                    padding: 25px;
+                    border-radius: 20px;
+                    border: 2px solid #333;
+                    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+                    text-align: center;
+                    margin-bottom: 15px;
+                }
+                .hospital-name {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #333;
+                }
+                .map-button {
+                    background-color: red;
+                    color: white !important;
+                    padding: 8px 12px;
+                    text-decoration: none;
+                    border-radius: 5px;
+                    display: inline-block;
+                    margin-top: 10px;
+                    font-weight: bold;
+                }
+                .map-button:hover {
+                    background-color: blue;
+                    color: white !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Create columns layout (3 per row)
+            cols = st.columns(3)
+
+            # Iterate through hospitals and distribute them across columns
+            for index, row in enumerate(filtered_data.iterrows()):
+                col = cols[index % 3]  # Distribute across 3 columns
+                with col:
+                    st.markdown(
+                        f"""
+                        <div class="hospital-container">
+                            <div class="hospital-name">{row[1]['Hospital Name']}</div>
+                            <a href="{row[1]['Map Link']}" target="_blank" class="map-button">🚖 View on Map</a>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
     elif select == 'Feedback':
         st.markdown(
@@ -306,6 +535,7 @@ def user_home_page():
         albumin=col2.number_input("Enter Albumin Value",min_value=0.0,max_value=1000.0)
         col1,col2,col3=st.columns([1,1,1])
         a_g_ratio=col2.number_input("Enter A-G Ratio Value",min_value=0.0,max_value=1000.0)
+
         col1,col2,col3=st.columns([2,2,1])
         if col2.button("Predict",type='primary'):
             user_input=[age,sex,ast_sgot,alt_sgot,ast_alt_ratio,ggtp,alp,bilirubin_total,bilirubin_direct,bilirubin_indirect,total_protein,albumin,a_g_ratio]
@@ -320,6 +550,11 @@ def user_home_page():
                 st.markdown(disease_info_box("You have Cirrhosis!!"),unsafe_allow_html=True)
             elif pred==4:
                 st.markdown(disease_info_box("You have Liver Cancer!!"),unsafe_allow_html=True)
+            user_classification = classify_liver_parameters(ast_sgot, alt_sgot, ast_alt_ratio, ggtp, alp,
+                                                    bilirubin_total, bilirubin_direct, bilirubin_indirect,
+                                                    total_protein, albumin)
+            recommendations_text = generate_liver_recommendations(user_classification)
+            st.markdown(prevntions(recommendations_text),unsafe_allow_html=True)
 
     elif select == 'Report Identification':
         st.title("Liver Disease Detection")
@@ -418,7 +653,6 @@ def user_home_page():
                             "Albumin": (3.5 + 5.5) / 2, 
                             "A:G Ratio": (1.0 + 2.2) / 2
                         }
-
                         healthy_means = list(healthy_values.values())
                         labels = list(healthy_values.keys())
 
@@ -444,32 +678,11 @@ def user_home_page():
                         )
 
                         st.plotly_chart(fig_bar)  # Display bar chart in Streamlit
-
-                        # 🕵️‍♂️ **Interactive Radar Chart (Spider Chart)**
-                        angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
-                        healthy_means.append(healthy_means[0])  # Close radar chart loop
-                        user_input.append(user_input[0])
-                        angles.append(angles[0])
-
-                        fig_radar = go.Figure()
-
-                        fig_radar.add_trace(go.Scatterpolar(
-                            r=healthy_means, theta=labels + [labels[0]], fill="toself",
-                            name="Healthy Values", line=dict(color="green")
-                        ))
-
-                        fig_radar.add_trace(go.Scatterpolar(
-                            r=user_input, theta=labels + [labels[0]], fill="toself",
-                            name="User Values", line=dict(color="red")
-                        ))
-
-                        fig_radar.update_layout(
-                            title="Radar Chart: Healthy vs. User Values",
-                            polar=dict(radialaxis=dict(visible=True)),
-                            hovermode="closest"
-                        )
-
-                        st.plotly_chart(fig_radar)  # Display radar chart in Streamlit
+                        user_classification = classify_liver_parameters(ast_sgot, alt_sgot, ast_alt_ratio, ggtp, alp,
+                                                    bilirubin_total, bilirubin_direct, bilirubin_indirect,
+                                                    total_protein, albumin)
+                        recommendations_text = generate_liver_recommendations(user_classification)
+                        st.markdown(prevntions(recommendations_text),unsafe_allow_html=True)
 
                 else:
                     st.markdown("### 📊 Liver Function Test Report")
@@ -510,16 +723,61 @@ def user_home_page():
                         st.markdown(disease_info_box("You have Cirrhosis!!"),unsafe_allow_html=True)
                     elif pred==4:
                         st.markdown(disease_info_box("You have Liver Cancer!!"),unsafe_allow_html=True)
+                    user_input = [
+                        ast_sgot, alt_sgot, ast_alt_ratio, ggtp, alp, 
+                        bilirubin_total, bilirubin_direct, bilirubin_indirect, 
+                        total_protein, albumin, a_g_ratio
+                    ]
+
+                    healthy_values = {
+                        "AST (SGOT)": (10 + 40) / 2, 
+                        "ALT (SGPT)": (7 + 56) / 2, 
+                        "AST:ALT Ratio": (0.7 + 1.5) / 2, 
+                        "GGTP": (8 + 61) / 2, 
+                        "ALP": (44 + 147) / 2, 
+                        "Bilirubin Total": (0.1 + 1.2) / 2, 
+                        "Bilirubin Direct": (0.1 + 0.4) / 2, 
+                        "Bilirubin Indirect": (0.2 + 0.7) / 2, 
+                        "Total Protein": (6 + 8) / 2, 
+                        "Albumin": (3.5 + 5.5) / 2, 
+                        "A:G Ratio": (1.0 + 2.2) / 2
+                    }
+                    healthy_means = list(healthy_values.values())
+                    labels = list(healthy_values.keys())
+
+                    # 📊 **Interactive Bar Chart**
+                    fig_bar = go.Figure()
+
+                    fig_bar.add_trace(go.Bar(
+                        x=labels, y=healthy_means, name="Healthy Values",
+                        marker=dict(color='green'), text=healthy_means, textposition="auto"
+                    ))
+
+                    fig_bar.add_trace(go.Bar(
+                        x=labels, y=user_input, name="User Values",
+                        marker=dict(color='red'), text=user_input, textposition="auto"
+                    ))
+
+                    fig_bar.update_layout(
+                        title="Healthy vs. User-Provided Liver Function Values",
+                        xaxis_title="Liver Function Parameters",
+                        yaxis_title="Values",
+                        barmode="group",
+                        hovermode="x unified"
+                    )
+
+                    st.plotly_chart(fig_bar)  # Display bar chart in Streamlit
+                    user_classification = classify_liver_parameters(ast_sgot, alt_sgot, ast_alt_ratio, ggtp, alp,
+                                                bilirubin_total, bilirubin_direct, bilirubin_indirect,
+                                                total_protein, albumin)
+                    recommendations_text = generate_liver_recommendations(user_classification)
+                    st.markdown(prevntions(recommendations_text),unsafe_allow_html=True)
             else:
                 st.image('https://cdni.iconscout.com/illustration/premium/thumb/help-liver-illustration-download-in-svg-png-gif-file-formats--holding-a-signboard-sign-board-pack-healthcare-medical-illustrations-2252541.png',use_column_width=True)
         except Exception as e:
             col1,col2,col3=st.columns([1,2,1])
             col2.image('https://static.vecteezy.com/system/resources/previews/029/194/739/non_2x/color-icon-for-invalid-vector.jpg')
-            st.write(e)
-    
     elif select == 'ChatBot':
-        st.title("🤖 ChatBot")
-
         # Styling
         st.markdown(
             """
@@ -535,178 +793,56 @@ def user_home_page():
             unsafe_allow_html=True
         )
 
-        # Initialize session state
+                # Configure API Key
+        api_key = "AIzaSyCEHqEUnURAuH54Tng8IjlWSR6LyzzEpCI"
+        genai.configure(api_key=api_key)
+
+        # Initialize the model
+        model1 = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
+
+        st.title("Liver Disease ChatBot")
+        st.markdown("Ask me anything about liver diseases...")
+
+        # Initialize session state for chat history
         if "messages" not in st.session_state:
             st.session_state.messages = []
-        if "step" not in st.session_state:
-            st.session_state.step = None
-        if "input_data" not in st.session_state:
-            st.session_state.input_data = {}
-        if "close_session" not in st.session_state:
-            st.session_state.close_session = False
-        if "current_field" not in st.session_state:
-            st.session_state.current_field = None
 
-        # Greeting the user
-        def greeting():
-            hour = datetime.now().hour
-            #show  4 greetings based on time
-            if 6 <= hour < 12:
-                return f"Good Morning!+{user[1]}"
-            elif 12 <= hour < 18:
-                return f"Good Afternoon! {user[1]}"
-            elif 18 <= hour < 21:
-                return f"Good Evening! {user[1]}"
-            else:
-                return f"Hello! {user[1]}"
-
-        # Display previous messages
+        # Display chat history
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        # Add initial bot greeting if no messages
-        if not st.session_state.messages:
-            greeting_message = f"Hello! {greeting()}"
-            st.session_state.messages.append({"role": "bot", "content": greeting_message})
-            with st.chat_message("bot"):
-                st.markdown(greeting_message)
+        # User Input
+        user_input = st.chat_input("Ask me anything about the liver...")
 
-        # Process user input
-        if user_input := st.chat_input("Your message here..."):
+        if user_input:
+            # Append user message to session and display it
             st.session_state.messages.append({"role": "user", "content": user_input})
             with st.chat_message("user"):
                 st.markdown(user_input)
 
-            # Main menu
-            if st.session_state.step is None:
-                if user_input.strip().lower() in ["hi", "hello", "hey","hii","hlo"]:
-                    bot_response = "Hello! How can I help you today?"
-                elif 'help' in user_input or 'Help' in user_input:
-                    bot_response = "I can help you with the following, Liver Disease Information, Prevention, Symptoms, Treatment, Nearby Hospitals"
-                elif 'Liver Disease' in user_input or 'liver disease' in user_input or 'Liver' in user_input or 'liver' in user_input:
-                    if 'information' in user_input or 'Information' in user_input:
-                        bot_response = "Liver disease can be inherited (genetic) or caused by a variety of factors that damage the liver, such as viruses and alcohol use. Obesity is also associated with liver damage. Over time, damage to the liver results in scarring (cirrhosis), which can lead to liver failure, a life-threatening condition."
-                    elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Liver disease can be prevented by avoiding excessive alcohol consumption, eating a healthy diet, maintaining a healthy weight, avoiding risky behavior, and getting vaccinated against hepatitis."
-                    elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of liver disease can include jaundice (yellowing of the skin and eyes), dark urine, abdominal pain and swelling, itchy skin, chronic fatigue, nausea or vomiting, loss of appetite, and swelling in the legs and ankles."
-                    elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for liver disease depends on the underlying cause and may include lifestyle changes, medications, or surgery. In some cases, a liver transplant may be necessary."
-                    elif 'cirrhosis' in user_input or 'Cirrhosis' in user_input:
-                        bot_response = "Cirrhosis is a late stage of scarring (fibrosis) of the liver caused by many forms of liver diseases and conditions, such as hepatitis and chronic alcoholism."
-                    elif 'Fatty Liver' in user_input or 'fatty liver' in user_input:
-                        bot_response = "Fatty liver disease is a condition in which fat builds up in your liver. There are two main types: Nonalcoholic fatty liver disease (NAFLD) and Alcoholic fatty liver disease (AFLD)."
-                    elif 'Hepatitis' in user_input or 'hepatitis' in user_input:
-                        bot_response = "Hepatitis is an inflammation of the liver. The condition can be self-limiting or can progress to fibrosis (scarring), cirrhosis, or liver cancer."
-                    elif 'cancer' in user_input or 'Cancer' in user_input:
-                        bot_response = "Liver cancer is a type of cancer that starts in the liver. Some cancers develop outside the liver and spread to the area. However, only cancers that start in the liver are described as liver cancer."
-                    else:
-                        bot_response = "I can provide information on Liver Disease. What would you like to know?"
-                elif 'Nearby Hospitals' in user_input or 'nearby hospitals' in user_input or 'Hospitals' in user_input or 'hospitals' in user_input:
-                    bot_response = "Go to Nearby Hospitals Section and select your region to find the nearest hospitals."
-                elif 'cirrhosis' in user_input or 'Cirrhosis' in user_input:
-                    if 'information' in user_input or 'Information' in user_input:
-                        bot_response = "Cirrhosis is a late stage of scarring (fibrosis) of the liver caused by many forms of liver diseases and conditions, such as hepatitis and chronic alcoholism."
-                    elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Cirrhosis can be prevented by avoiding excessive alcohol consumption, maintaining a healthy weight, eating a healthy diet, and avoiding risky behavior."
-                    elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of cirrhosis can include fatigue, weakness, loss of appetite, nausea, weight loss, itching, easy bruising, and jaundice."
-                    elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for cirrhosis may involve lifestyle changes, medications, or surgery. In some cases, a liver transplant may be necessary."
-                    elif 'Diet' in user_input or 'diet' in user_input:
-                        bot_response = "A healthy diet for cirrhosis includes plenty of fruits, vegetables, whole grains, and lean protein. Limiting salt, sugar, and unhealthy fats is also important."
-                    else:
-                        bot_response = "I can provide information on Cirrhosis. What would you like to know?"
-
-                elif 'Fatty Liver' in user_input or 'fatty liver' in user_input:
-                    if 'information' in user_input or 'Information' in user_input:
-                        bot_response = "Fatty liver disease is a condition in which fat builds up in your liver. There are two main types: Nonalcoholic fatty liver disease (NAFLD) and Alcoholic fatty liver disease (AFLD)."
-                    elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Fatty liver disease can be prevented by maintaining a healthy weight, eating a balanced diet, exercising regularly, and avoiding excessive alcohol consumption."
-                    elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of fatty liver disease can include fatigue, weakness, weight loss, abdominal pain, and swelling in the abdomen."
-                    elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for fatty liver disease may involve lifestyle changes, medications, or surgery. In some cases, weight loss and exercise can help improve the condition."
-                    elif 'Diet' in user_input or 'diet' in user_input:
-                        bot_response = "A healthy diet for fatty liver disease includes plenty of fruits, vegetables, whole grains, and lean protein. Limiting sugar, salt, and unhealthy fats is also important."
-                    else:
-                        bot_response = "I can provide information on Fatty Liver Disease. What would you like to know?"
-                elif 'Hepatitis' in user_input or 'hepatitis' in user_input:
-                    if 'information' in user_input or 'Information' in user_input:
-                        bot_response = "Hepatitis is an inflammation of the liver. The condition can be self-limiting or can progress to fibrosis (scarring), cirrhosis, or liver cancer."
-                    elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Hepatitis can be prevented by getting vaccinated, practicing good hygiene, avoiding risky behavior, and not sharing needles or personal items."
-                    elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of hepatitis can include fatigue, fever, nausea, vomiting, abdominal pain, dark urine, and jaundice."
-                    elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for hepatitis may involve medications, lifestyle changes, or surgery. In some cases, antiviral drugs can help manage the condition."
-                    elif 'Types' in user_input or 'types' in user_input:
-                        bot_response = "There are several types of hepatitis, including hepatitis A, B, C, D, and E. Each type is caused by a different virus and has different symptoms and treatments."
-                    else:
-                        bot_response = "I can provide information on Hepatitis. What would you like to know?"
-                elif 'cancer' in user_input or 'Cancer' in user_input:
-                    if 'information' in user_input or 'Information' in user_input:
-                        bot_response = "Liver cancer is a type of cancer that starts in the liver. Some cancers develop outside the liver and spread to the area. However, only cancers that start in the liver are described as liver cancer."
-                    elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Liver cancer can be prevented by avoiding excessive alcohol consumption, maintaining a healthy weight, eating a balanced diet, and getting vaccinated against hepatitis."
-                    elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of liver cancer can include weight loss, loss of appetite, nausea, vomiting, abdominal pain, and jaundice."
-                    elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for liver cancer may involve surgery, chemotherapy, radiation therapy, or targeted therapy. In some cases, a liver transplant may be necessary."
-                    elif 'Types' in user_input or 'types' in user_input:
-                        bot_response = "There are several types of liver cancer, including hepatocellular carcinoma, cholangiocarcinoma, and angiosarcoma. Each type has different symptoms and treatments."
-                    else:
-                        bot_response = "I can provide information on Liver Cancer. What would you like to know?"
-                elif 'Diet' in user_input or 'diet' in user_input:
-                        bot_response = "A healthy diet for liver disease includes plenty of fruits, vegetables, whole grains, and lean protein. Limiting salt, sugar, and unhealthy fats is also important."
-                elif 'Symptoms' in user_input or 'symptoms' in user_input:
-                        bot_response = "Symptoms of liver disease can include jaundice (yellowing of the skin and eyes), dark urine, abdominal pain and swelling, itchy skin, chronic fatigue, nausea or vomiting, loss of appetite, and swelling in the legs and ankles."
-                elif 'Treatment' in user_input or 'treatment' in user_input:
-                        bot_response = "Treatment for liver disease depends on the underlying cause and may include lifestyle changes, medications, or surgery. In some cases, a liver transplant may be necessary."
-                elif 'Prevention' in user_input or 'prevention' in user_input:
-                        bot_response = "Liver disease can be prevented by avoiding excessive alcohol consumption, eating a healthy diet, maintaining a healthy weight, avoiding risky behavior, and getting vaccinated against hepatitis."
-                elif 'Alcohol' in user_input or 'alcohol' in user_input:
-                        bot_response = "Excessive alcohol consumption is a major risk factor for liver disease. Limiting alcohol intake can help reduce your risk of developing liver problems."
-                elif 'Vaccination' in user_input or 'vaccination' in user_input:
-                        bot_response = "Vaccination against hepatitis A and B can help prevent liver disease. Talk to your healthcare provider about getting vaccinated."
-                elif 'Risk Factors' in user_input or 'risk factors' in user_input:
-                        bot_response = "Risk factors for liver disease include obesity, diabetes, high blood pressure, high cholesterol, and a family history of liver problems."
-                elif 'Healthy Lifestyle' in user_input or 'healthy lifestyle' in user_input:
-                        bot_response = "Maintaining a healthy lifestyle can help prevent liver disease. This includes eating a balanced diet, exercising regularly, getting enough sleep, and avoiding harmful substances."
-                elif 'Albumin' in user_input or 'albumin' in user_input:
-                        bot_response = "Albumin is a protein made by the liver. Low levels of albumin in the blood can indicate liver disease or other health problems."
-                elif 'Globulin' in user_input or 'globulin' in user_input:
-                        bot_response = "Globulin is a group of proteins made by the liver. High or low levels of globulin in the blood can indicate liver disease, kidney disease, or other health problems."
-                elif 'Bilirubin' in user_input or 'bilirubin' in user_input:
-                        bot_response = "Bilirubin is a yellowish substance found in bile. High levels of bilirubin in the blood can indicate liver disease, anemia, or other health problems."
-                elif 'Alkaline Phosphatase' in user_input or 'alkaline phosphatase' in user_input:
-                        bot_response = "Alkaline phosphatase is an enzyme found in the liver, bones, and other tissues. High levels of alkaline phosphatase in the blood can indicate liver disease, bone disease, or other health problems."
-                elif 'Alamine Aminotransferase' in user_input or 'alamine aminotransferase' in user_input:
-                        bot_response = "Alamine aminotransferase (ALT) is an enzyme found in the liver. High levels of ALT in the blood can indicate liver disease, hepatitis, or other health problems."
-                elif 'Aspartate Aminotransferase' in user_input or 'aspartate aminotransferase' in user_input:
-                        bot_response = "Aspartate aminotransferase (AST) is an enzyme found in the liver, heart, and other tissues. High levels of AST in the blood can indicate liver disease, heart disease, or other health problems."
-                elif 'Total Proteins' in user_input or 'total proteins' in user_input:
-                        bot_response = "Total proteins are the total amount of protein in the blood. Low or high levels of total proteins can indicate liver disease, kidney disease, or other health problems."
-                elif 'Albumin and Globulin Ratio' in user_input or 'albumin and globulin ratio' in user_input:
-                        bot_response = "The albumin and globulin ratio is a measure of the balance between albumin and globulin in the blood. Abnormal levels of this ratio can indicate liver disease, kidney disease, or other health problems."
-                elif 'Thank you' in user_input or 'thank you' in user_input or 'Thanks' in user_input or 'thanks' in user_input:
-                        bot_response = "You're welcome! If you have any more questions, feel free to ask."
-                elif 'bye' in user_input or 'Bye' in user_input or 'exit' in user_input or 'Exit' in user_input or 'quit' in user_input or 'Quit' in user_input:
-                    bot_response = "Goodbye! Have a great day ahead. 👋"
-                    st.session_state.close_session = True
-                else:
-                    bot_response = "I'm sorry, I didn't understand that.Try asking something else."
+            # Handle general greetings separately
+            greetings = ["hi", "hello", "hey", "gm", "good morning", "good evening", "good night"]
+            if user_input.lower() in greetings:
+                bot_response = "Hello! How can I assist you with liver-related queries? 😊"
+            
             else:
-                bot_response = "I'm sorry, I didn't understand that. Please try again."
+                # Check if the input is related to the eye
+                check_prompt = f"Is the following question related to the Liver? Answer only 'yes' or 'no'. Question: {user_input}"
+                check_response = model1.generate_content([check_prompt]).text.strip().lower()
 
-            # Append bot response
+                if check_response == "yes":
+                    # Generate response from Gemini API
+                    bot_prompt = f"Answer the following question in detail: {user_input} in 1 paragraph."
+                    response = model1.generate_content([bot_prompt])
+                    bot_response = response.text
+                else:
+                    bot_response = "Please ask a relevant question about the Liver."
+
+            # Append bot response to session and display it
             st.session_state.messages.append({"role": "bot", "content": bot_response})
             with st.chat_message("bot"):
-                if "I'm sorry" in bot_response:
-                    st.error(bot_response)
-                else:
-                    st.success(bot_response)    
+                st.markdown(bot_response)
     elif select == 'Logout':
         st.session_state["logged_in"] = False
         st.session_state["current_user"] = None
