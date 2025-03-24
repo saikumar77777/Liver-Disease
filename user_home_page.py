@@ -290,6 +290,7 @@ def user_home_page():
         ]
         user_loc=col3.selectbox("Select Your Location",loc)
         if user_loc==" ":
+            st.write(user_loc)
             if user_loc in locations:
                 filtered_data = data[data['Region'] == user_location]
 
