@@ -290,7 +290,7 @@ def user_home_page():
         ]
         user_loc=col3.selectbox("Select Your Location",loc)
         if user_loc==" ":
-            if user_location in locations:
+            if user_loc in locations:
                 filtered_data = data[data['Region'] == user_location]
 
                 # Custom CSS for styling the container and button
