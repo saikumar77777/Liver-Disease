@@ -6,3 +6,5 @@ numpy==1.26.4
 pdfplumber==0.11.4
 matplotlib==3.10.0
 plotly==5.18.0
+geocoder== 1.38.1
+google-generativeai== 0.8.3
